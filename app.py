@@ -91,7 +91,7 @@ if not st.session_state['utente_loggato']:
                     username = f"{nome.strip().lower()}.{cognome.strip().lower()}"
                     check = supabase.table("membri").select("*").eq("username", username).execute()
                     if len(check.data) > 0:
-                        st.error(f"Username {username} esiste già!")
+                        st.error(f"Lo username {username} esiste già!")
                     else:
                         nuovo_utente = {
                             "nome": nome.strip().capitalize(),
@@ -124,9 +124,9 @@ else:
         
     st.sidebar.divider()
     
-    opzioni_menu = ["🏠 Home", "📅 Calendari", "🏢 Aree di Lavoro", "👥 Rubrica Contatti"]
+    opzioni_menu = ["🏠 Home", "📅 Calendari", "🏢 Aree di Lavoro", "👤 Area Personale", "👥 Rubrica Contatti"]
     if is_direttivo:
-        opzioni_menu.extend(["📄 Scadenze Documenti", "🛒 Gestione Acquisti", "📊 Bilancio Budget", "⚙️ Gestione Utenti"])
+        opzioni_menu.extend(["📄 Scadenze Documenti", "📂 Documenti Membri", "🛒 Gestione Acquisti", "📊 Bilancio Budget", "⚙️ Gestione Utenti"])
         
     menu = st.sidebar.radio("Scegli la sezione:", opzioni_menu)
     stati_acquisto = ["Inoltrato", "Inviato a tecnico responsabile", "Inviato a responsabile dei fondi", "Inviato a Responsabile amministrativo", "Buono d'ordine emesso", "Pagato"]
@@ -181,7 +181,7 @@ else:
                 ev_futuri = [e for e in eventi if datetime.strptime(e['data_inizio'], "%Y-%m-%d").date() >= oggi] if eventi else []
                 if ev_futuri:
                     for e in ev_futuri[:5]:
-                        st.write(f"🏎️ **{e['titolo']}** - {formatta_data_it(e['data_inizio'])}")
+                        st.write(f"🏎️ [{e.get('vettura', 'N/D')}] **{e['titolo']}** - {formatta_data_it(e['data_inizio'])}")
                 else:
                     st.write("Nessun evento vettura in programma.")
                     
@@ -213,11 +213,77 @@ else:
     # ==========================================
     elif menu == "👥 Rubrica Contatti":
         st.title("👥 Rubrica Contatti")
-        df = pd.DataFrame(supabase.table("membri").select("nome, cognome, email, ruolo, divisione").execute().data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        utenti_db = supabase.table("membri").select("nome, cognome, email, telefono, ruolo, divisione").execute().data
+        if utenti_db:
+            df = pd.DataFrame(utenti_db)
+            df.columns = ['Nome', 'Cognome', 'Email', 'Telefono', 'Ruolo', 'Divisione']
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nessun membro trovato.")
 
     # ==========================================
-    # 3. GESTIONE SCADENZE (NUOVO)
+    # 3. AREA PERSONALE (DOCUMENTI OPZIONALI)
+    # ==========================================
+    elif menu == "👤 Area Personale":
+        st.title(f"👤 Area Personale di {utente['nome']} {utente['cognome']}")
+        st.write("Inserisci i tuoi dati anagrafici e carica i documenti richiesti (tutti i campi e file sono opzionali).")
+        
+        dati_personali = supabase.table("membri").select("*").eq("id", utente['id']).execute().data[0]
+        
+        with st.form("form_area_personale"):
+            telefono = st.text_input("Numero di telefono", value=dati_personali.get('telefono', '') or '')
+            data_nascita = st.text_input("Data di nascita (es. DD/MM/AAAA)", value=dati_personali.get('data_nascita', '') or '')
+            luogo_nascita = st.text_input("Luogo di nascita", value=dati_personali.get('luogo_nascita', '') or '')
+            codice_fiscale = st.text_input("Codice Fiscale", value=dati_personali.get('codice_fiscale', '') or '')
+            
+            st.divider()
+            st.subheader("📎 Caricamento Documenti Personali e Certificati (Opzionali)")
+            
+            ci_file = st.file_uploader("Carta d'Identità", type=["pdf", "png", "jpg"])
+            ts_file = st.file_uploader("Tessera Sanitaria", type=["pdf", "png", "jpg"])
+            pass_file = st.file_uploader("Passaporto", type=["pdf", "png", "jpg"])
+            pat_file = st.file_uploader("Patente", type=["pdf", "png", "jpg"])
+            sicurezza_file = st.file_uploader("Certificati Corsi sulla Sicurezza", type=["pdf", "png", "jpg"])
+            
+            if st.form_submit_button("Salva Area Personale"):
+                with st.spinner("Salvataggio in corso..."):
+                    url_ci = upload_file_to_supabase(ci_file.getvalue(), ci_file.name, "workspaces") if ci_file else dati_personali.get('url_ci')
+                    url_ts = upload_file_to_supabase(ts_file.getvalue(), ts_file.name, "workspaces") if ts_file else dati_personali.get('url_ts')
+                    url_pass = upload_file_to_supabase(pass_file.getvalue(), pass_file.name, "workspaces") if pass_file else dati_personali.get('url_pass')
+                    url_pat = upload_file_to_supabase(pat_file.getvalue(), pat_file.name, "workspaces") if pat_file else dati_personali.get('url_pat')
+                    url_sic = upload_file_to_supabase(sicurezza_file.getvalue(), sicurezza_file.name, "workspaces") if sicurezza_file else dati_personali.get('url_sicurezza')
+                    
+                    aggiornamento = {
+                        "telefono": telefono,
+                        "data_nascita": data_nascita,
+                        "luogo_nascita": luogo_nascita,
+                        "codice_fiscale": codice_fiscale,
+                        "url_ci": url_ci,
+                        "url_ts": url_ts,
+                        "url_pass": url_pass,
+                        "url_pat": url_pat,
+                        "url_sicurezza": url_sic
+                    }
+                    supabase.table("membri").update(aggiornamento).eq("id", utente['id']).execute()
+                    st.success("Dati personali salvati con successo!")
+                    time.sleep(1)
+                    st.rerun()
+
+        st.divider()
+        st.markdown(
+            """<div style='background-color: #1e1e1e; padding: 15px; border-radius: 5px; font-size: 13px; color: #b0b0b0;'>
+            <b>🔒 Informativa sulla Privacy e Trattamento dei Dati Personali:</b><br>
+            I dati anagrafici, i documenti d'identità e i certificati di sicurezza eventualmente caricati all'interno di questa sezione 
+            vengono raccolti in conformità al GDPR (Regolamento UE 2016/679) e sono trattati esclusivamente dal Board e dai soggetti autorizzati 
+            del team <b>More Modena Racing</b> per fini strettamente connessi all'organizzazione logistica, alla compilazione di documentazione per gare, 
+            iscrizioni agli eventi Formula Student e prenotazione di trasferte. I dati non saranno ceduti a terzi né utilizzati per scopi commerciali. 
+            Con l'inserimento e il salvataggio dei dati, l'utente acconsente al loro trattamento per le sole finalità istituzionali del team.
+            </div>""", 
+            unsafe_allow_html=True
+        )
+
+    # ==========================================
+    # 4. SCADENZE DOCUMENTI
     # ==========================================
     elif menu == "📄 Scadenze Documenti":
         st.title("📄 Gestione Documenti e Scadenze")
@@ -252,8 +318,8 @@ else:
                         st.markdown(f"📄 **[Scarica Documento/Template Allegato]({s['url_template']})**")
                     
                     st.divider()
-                    st.write("**Aggiungi o Aggiorna il Template / Documento:**")
-                    file_up = st.file_uploader("Carica File (PDF, Word, Excel...)", key=f"file_scad_{s['id']}")
+                    st.write("**Aggiungi o Aggiorna il Template / Documento (Opzionale):**")
+                    file_up = st.file_uploader("Carica File", key=f"file_scad_{s['id']}")
                     
                     col_s1, col_s2 = st.columns([1, 4])
                     if col_s1.button("💾 Salva File", key=f"btn_scad_{s['id']}"):
@@ -273,7 +339,41 @@ else:
             st.info("Non ci sono scadenze documentali attive.")
 
     # ==========================================
-    # 4. CALENDARI
+    # 5. DOCUMENTI MEMBRI (RISERVATO AL BOARD)
+    # ==========================================
+    elif menu == "📂 Documenti Membri":
+        st.title("📂 Documenti e Anagrafiche Membri")
+        st.write("Sezione riservata al Board: visualizza i dati e i file personali di tutti i membri in ordine alfabetico.")
+        
+        tutti_membri = supabase.table("membri").select("*").order("cognome").execute().data
+        if tutti_membri:
+            for m in tutti_membri:
+                nome_completo = f"{m['cognome'] or ''} {m['nome'] or ''} ({m['divisione']} - {m['ruolo']})"
+                with st.expander(f"👤 {nome_completo}"):
+                    c_d1, c_d2 = st.columns(2)
+                    c_d1.write(f"**Email:** {m.get('email', '-')}")
+                    c_d1.write(f"**Telefono:** {m.get('telefono', 'Non inserito')}")
+                    c_d1.write(f"**Data di Nascita:** {m.get('data_nascita', 'Non inserita')}")
+                    c_d1.write(f"**Luogo di Nascita:** {m.get('luogo_nascita', 'Non inserito')}")
+                    c_d2.write(f"**Codice Fiscale:** {m.get('codice_fiscale', 'Non inserito')}")
+                    
+                    st.write("**File Allegati:**")
+                    links_utili = []
+                    if m.get('url_ci'): links_utili.append(f"[Carta d'Identità]({m['url_ci']})")
+                    if m.get('url_ts'): links_utili.append(f"[Tessera Sanitaria]({m['url_ts']})")
+                    if m.get('url_pass'): links_utili.append(f"[Passaporto]({m['url_pass']})")
+                    if m.get('url_pat'): links_utili.append(f"[Patente]({m['url_pat']})")
+                    if m.get('url_sicurezza'): links_utili.append(f"[Corsi Sicurezza]({m['url_sicurezza']})")
+                    
+                    if links_utili:
+                        st.markdown(" | ".join(links_utili))
+                    else:
+                        st.caption("Nessun documento caricato dall'utente.")
+        else:
+            st.info("Nessun membro registrato.")
+
+    # ==========================================
+    # 6. CALENDARI
     # ==========================================
     elif menu == "📅 Calendari":
         st.title("📅 Calendari Team MMR")
@@ -300,6 +400,7 @@ else:
                 with st.expander("➕ Aggiungi Evento Macchina"):
                     with st.form("form_macchina"):
                         titolo = st.text_input("Titolo Evento")
+                        vettura = st.selectbox("Seleziona Vettura", ["M26-ED (Elettrica)", "M26-LH (Ibrida)", "Ibrida Rossa"])
                         d_inizio = st.date_input("Data Inizio", format="DD/MM/YYYY")
                         d_fine = st.date_input("Data Fine", format="DD/MM/YYYY")
                         
@@ -313,7 +414,7 @@ else:
                         
                         if st.form_submit_button("Salva Evento"):
                             nuovo_evento = {
-                                "titolo": titolo, "data_inizio": str(d_inizio), "data_fine": str(d_fine),
+                                "titolo": titolo, "vettura": vettura, "data_inizio": str(d_inizio), "data_fine": str(d_fine),
                                 "tutto_il_giorno": tutto_il_giorno, "ora_inizio": str(ora_in), "ora_fine": str(ora_fi),
                                 "furgone_richiesto": furgone, "stato_furgone": "In attesa" if furgone else "Non richiesto",
                                 "note": note, "creatore": utente['username']
@@ -325,21 +426,30 @@ else:
             eventi_macchina = supabase.table("calendario_macchina").select("*").order("data_inizio").execute().data
             cal_macchina_events = []
             
+            colori_auto = {
+                "M26-ED (Elettrica)": "#1d3557",
+                "M26-LH (Ibrida)": "#e63946",
+                "Ibrida Rossa": "#f77f00"
+            }
+
             if eventi_macchina:
                 with st.expander("⚙️ Gestisci / Elimina Eventi Macchina"):
                     for e in eventi_macchina:
                         col_ev1, col_ev2 = st.columns([4,1])
                         data_it = formatta_data_it(e['data_inizio'])
-                        col_ev1.write(f"{e['titolo']} ({data_it}) - {e['creatore']}")
+                        col_ev1.write(f"[{e.get('vettura', 'Auto')}] {e['titolo']} ({data_it}) - {e['creatore']}")
                         if is_direttivo or e['creatore'] == utente['username']:
                             if col_ev2.button("🗑️", key=f"del_mac_{e['id']}"):
                                 supabase.table("calendario_macchina").delete().eq("id", e['id']).execute()
                                 st.rerun()
 
                 for e in eventi_macchina:
+                    vettura_scelta = e.get('vettura', 'M26-ED (Elettrica)')
+                    colore_vettura = colori_auto.get(vettura_scelta, "#e63946")
+                    
                     evento_cal = {
-                        "title": f"{e['titolo']} ({e['creatore']}) {'🚐' if e['furgone_richiesto'] else ''}",
-                        "color": "#e63946"
+                        "title": f"[{vettura_scelta}] {e['titolo']} ({e['creatore']}) {'🚐' if e['furgone_richiesto'] else ''}",
+                        "color": colore_vettura
                     }
                     if e.get("tutto_il_giorno", True):
                         evento_cal["start"] = e['data_inizio']
@@ -353,7 +463,6 @@ else:
                         
                     cal_macchina_events.append(evento_cal)
             
-            # AGGIUNTA SCADENZE DOCUMENTI AL CALENDARIO MACCHINA
             scadenze = supabase.table("scadenze_documenti").select("*").execute().data
             if scadenze:
                 for s in scadenze:
@@ -361,7 +470,7 @@ else:
                         "title": f"🚨 SCADENZA: {s['nome_documento']}",
                         "start": s['data_scadenza'],
                         "end": s['data_scadenza'],
-                        "color": "#d90429", # Rosso Scuro
+                        "color": "#d90429",
                         "allDay": True
                     })
                     data_scad_obj = datetime.strptime(s['data_scadenza'], "%Y-%m-%d")
@@ -370,10 +479,11 @@ else:
                         "title": f"⏳ PROMEMORIA (-15g): {s['nome_documento']}",
                         "start": data_promemoria,
                         "end": data_promemoria,
-                        "color": "#ffb703", # Giallo/Arancio
+                        "color": "#ffb703",
                         "allDay": True
                     })
 
+            st.write("🔵 *M26-ED (Blu)* | 🔴 *M26-LH (Rosso)* | 🟠 *Ibrida Rossa (Arancione)*")
             calendar(events=cal_macchina_events, options=calendar_options, key="cal_macchina")
 
         # --- CALENDARIO MO25 ---
@@ -426,6 +536,13 @@ else:
                                     supabase.table("prenotazioni_aule").update({"stato": "Approvato"}).eq("id", p['id']).execute()
                                     st.rerun()
 
+            colori_divisioni = {
+                "Business": "#264653", "Powertrain CV": "#2a9d8f", "Powertrain EV": "#e76f51",
+                "Frame and Body": "#457b9d", "Aerodynamics and Thermal Managment": "#1d3557",
+                "Vehicle Dynamics": "#f4a261", "Electronics": "#9b5de5", "Actuations": "#f15bb5",
+                "Autonomous Driving": "#00bbf9", "Marketing": "#00f5d4", "Manufacturing": "#fee440", "Communication": "#b5179e"
+            }
+
             cal_mo25_events = []
             if pren_mo25:
                 for p in pren_mo25:
@@ -437,19 +554,21 @@ else:
                     start_str = f"{p['data_prenotazione']}T{ora_in_str}"
                     end_str = f"{p['data_prenotazione']}T{ora_fi_str}"
                     
-                    colore_sfondo = "#2e7d32" if p['stato'] == 'Approvato' else "#9e9e9e"
-                    titolo_evento = f"{p['divisione']} ({p['num_persone']}p) - {p['richiedente']}"
+                    colore_base = colori_divisioni.get(p['divisione'], "#2e7d32")
+                    colore_sfondo = colore_base if p['stato'] == 'Approvato' else "#6c757d"
+                    
+                    titolo_evento = f"{p['divisione']} ({p['num_persone']}p) - {p['richiedente']} [{p['stato']}]"
                     
                     cal_mo25_events.append({
                         "title": titolo_evento, "start": start_str, "end": end_str,
                         "backgroundColor": colore_sfondo, "borderColor": colore_sfondo
                     })
 
-            st.write("🟢 *Verde: Approvato* | ⚪ *Grigio: In Attesa*")
+            st.write("🎨 *Ogni divisione ha il suo colore identificativo. Se grigio, è in attesa di approvazione.*")
             calendar(events=cal_mo25_events, options=calendar_options, key="cal_mo25_view")
 
     # ==========================================
-    # 5. AREE DI LAVORO (FILE MANAGER)
+    # 7. AREE DI LAVORO (FILE MANAGER)
     # ==========================================
     elif menu == "🏢 Aree di Lavoro":
         st.title("🏢 Aree di Lavoro Divisioni")
@@ -549,12 +668,11 @@ else:
                     st.info("Nessuna richiesta in sospeso.")
 
     # ==========================================
-    # 6. GESTIONE ACQUISTI
+    # 8. GESTIONE ACQUISTI
     # ==========================================
     elif menu == "🛒 Gestione Acquisti":
         st.title("🛒 Gestione Acquisti")
         
-        # PANNELLO CFO
         if ruolo_display == "CFO (Admin)":
             st.subheader("Pannello di Controllo CFO: Tutte le Richieste")
             richieste = supabase.table("acquisti").select("*").execute().data
@@ -595,7 +713,6 @@ else:
                 st.info("Non ci sono richieste di acquisto in sospeso.")
             st.divider()
                 
-        # INOLTRO ACQUISTI
         if is_direttivo:
             st.subheader("Inoltra Nuova Richiesta di Acquisto")
             oggetto = st.text_input("Cosa stai acquistando?")
@@ -607,33 +724,18 @@ else:
             file_p1, file_p2, file_p3, file_dichiarazione = None, None, None, None
             
             if unica_prod:
-                st.info("📌 Modalità Fornitore Unico attiva: Richiesto 1 Preventivo e 1 Dichiarazione di Unicità.")
+                st.info("📌 Modalità Fornitore Unico attiva: Richiesto Preventivo e Dichiarazione (opzionali).")
                 file_p1 = st.file_uploader("Carica Preventivo 1", type=["pdf"])
                 file_dichiarazione = st.file_uploader("Carica Dichiarazione di Unicità", type=["pdf"])
             else:
                 file_p1 = st.file_uploader("Carica Preventivo 1", type=["pdf"])
                 file_p2 = st.file_uploader("Carica Preventivo 2", type=["pdf"])
                 if costo > 5000:
-                    st.warning("⚠️ Per acquisti superiori a 5.000€ sono obbligatori 3 preventivi.")
+                    st.warning("⚠️ Per acquisti superiori a 5.000€ sono raccomandati 3 preventivi.")
                     file_p3 = st.file_uploader("Carica Preventivo 3", type=["pdf"])
             
             if st.button("📤 Inoltra al CFO", type="primary"):
-                valid = False
                 if oggetto and azienda and costo > 0:
-                    if unica_prod:
-                        if file_p1 and file_dichiarazione: valid = True
-                        else: st.error("Devi caricare il preventivo e la dichiarazione di unicità.")
-                    else:
-                        if costo > 5000:
-                            if file_p1 and file_p2 and file_p3: valid = True
-                            else: st.error("Devi caricare tutti e 3 i preventivi richiesti.")
-                        else:
-                            if file_p1 and file_p2: valid = True
-                            else: st.error("Devi caricare 2 preventivi comparativi.")
-                else: 
-                    st.error("Compila i campi Oggetto, Azienda e inserisci un Costo maggiore di zero.")
-                
-                if valid:
                     with st.spinner("Caricamento PDF e invio richiesta in corso..."):
                         url_1 = upload_file_to_supabase(file_p1.getvalue(), file_p1.name, "preventivi") if file_p1 else None
                         url_2 = upload_file_to_supabase(file_p2.getvalue(), file_p2.name, "preventivi") if file_p2 else None
@@ -648,6 +750,8 @@ else:
                         st.success("Richiesta inviata con successo!")
                         time.sleep(1)
                         st.rerun()
+                else: 
+                    st.error("Compila i campi Oggetto, Azienda e inserisci un Costo maggiore di zero.")
 
             st.divider()
             st.subheader(f"Le richieste di: {utente['divisione']}")
@@ -657,7 +761,7 @@ else:
                 st.dataframe(df_mie, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # 7. BILANCIO BUDGET
+    # 9. BILANCIO BUDGET
     # ==========================================
     elif menu == "📊 Bilancio Budget":
         st.title("📊 Bilancio e Budget Generale")
@@ -675,15 +779,15 @@ else:
             st.info("Nessun acquisto ha ancora raggiunto la fase di emissione buono d'ordine.")
 
     # ==========================================
-    # 8. GESTIONE UTENTI
+    # 10. GESTIONE UTENTI
     # ==========================================
     elif menu == "⚙️ Gestione Utenti":
         st.title("⚙️ Gestione Utenti Avanzata")
         utenti = supabase.table("membri").select("id, nome, cognome, username, email, ruolo, divisione").execute().data
         
         if utenti:
-            st.write("Come membro del direttivo, puoi aggiornare i ruoli del team o rimuovere account.")
-            st.info("⚠️ Solo il Team Leader (TL) può degradare una persona a un ruolo inferiore.")
+            st.write("Gestione dei ruoli e degli account del team.")
+            st.info("ℹ️ Il Team Leader (TL) può modificare tutti. DL e CTO possono rimuovere o gestire solo i Membri.")
             
             ruoli_disponibili = ["Membro", "Division Leader", "CTO", "Team Leader"]
             punteggio_ruoli = {"Membro": 0, "Division Leader": 1, "CTO": 2, "Team Leader": 3}
@@ -693,12 +797,15 @@ else:
                     with st.container():
                         col_info, col_ruolo, col_salva, col_elimina = st.columns([3, 2, 2, 1])
                         
-                        col_info.write(f"**{u['nome']} {u['cognome']}** ({u['username']}) - {u['divisione']}")
+                        col_info.write(f"**{u['nome']} {u['cognome']}** ({u['username']}) - {u['ruolo']} [{u['divisione']}]")
                         nuovo_ruolo = col_ruolo.selectbox("Cambia ruolo", ruoli_disponibili, index=ruoli_disponibili.index(u['ruolo']), key=f"ruolo_{u['id']}")
                         
-                        if col_salva.button("🔄 Aggiorna Ruolo", key=f"aggiorna_{u['id']}"):
+                        if col_salva.button("🔄 Aggiorna Ruolo", key=f"aggiorna_{u['id']}_{u['ruolo']}"):
                             is_downgrade = punteggio_ruoli[nuovo_ruolo] < punteggio_ruoli[u['ruolo']]
-                            if is_downgrade and utente['ruolo'] != "Team Leader":
+                            
+                            if utente['ruolo'] in ["Division Leader", "CTO"] and u['ruolo'] != "Membro":
+                                st.error("❌ Operazione negata: DL e CTO possono gestire/rimuovere solo i Membri.")
+                            elif is_downgrade and utente['ruolo'] != "Team Leader":
                                 st.error("❌ Operazione negata: Solo il Team Leader può retrocedere di livello un utente.")
                             else:
                                 supabase.table("membri").update({"ruolo": nuovo_ruolo}).eq("id", u['id']).execute()
@@ -706,7 +813,10 @@ else:
                                 st.rerun()
                                 
                         if col_elimina.button("🗑️", key=f"elimina_{u['id']}", help="Elimina utente"):
-                            supabase.table("membri").delete().eq("id", u['id']).execute()
-                            st.warning("Utente eliminato!")
-                            st.rerun()
+                            if utente['ruolo'] in ["Division Leader", "CTO"] and u['ruolo'] != "Membro":
+                                st.error("❌ Non puoi eliminare account direttivi.")
+                            else:
+                                supabase.table("membri").delete().eq("id", u['id']).execute()
+                                st.warning("Utente eliminato!")
+                                st.rerun()
                         st.divider()
