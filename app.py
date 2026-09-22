@@ -124,7 +124,11 @@ else:
         
     st.sidebar.divider()
     
-    opzioni_menu = ["🏠 Home", "📅 Calendari", "🏢 Aree di Lavoro", "👤 Area Personale", "👥 Rubrica Contatti"]
+    opzioni_menu = [
+        "🏠 Home", "📅 Calendari", "🏢 Aree di Lavoro", "📋 Task Manager", 
+        "🧪 Test & Pista", "📖 Dizionario Componenti", "📦 BOM (Bill of Materials)", 
+        "👤 Area Personale", "👥 Rubrica Contatti"
+    ]
     if is_direttivo:
         opzioni_menu.extend(["📄 Scadenze Documenti", "📂 Documenti Membri", "🛒 Gestione Acquisti", "📊 Bilancio Budget", "⚙️ Gestione Utenti"])
         
@@ -132,13 +136,14 @@ else:
     stati_acquisto = ["Inoltrato", "Inviato a tecnico responsabile", "Inviato a responsabile dei fondi", "Inviato a Responsabile amministrativo", "Buono d'ordine emesso", "Pagato"]
 
     # ==========================================
-    # 1. HOME CON DASHBOARD AVANZATA
+    # 1. HOME CON DASHBOARD E MINI CALENDARIO IN BASSO
     # ==========================================
     if menu == "🏠 Home":
         st.title("🏎️ Home Gestionale MMR")
         
         if is_direttivo:
             st.header("📊 Dashboard Direttivo")
+            
             col1, col2 = st.columns(2)
             
             with col1:
@@ -176,15 +181,6 @@ else:
                         st.write("Nessuna nuova richiesta di acquisto.")
 
             with col2:
-                st.subheader("📅 Prossimi Eventi Macchina")
-                eventi = supabase.table("calendario_macchina").select("*").order("data_inizio").execute().data
-                ev_futuri = [e for e in eventi if datetime.strptime(e['data_inizio'], "%Y-%m-%d").date() >= oggi] if eventi else []
-                if ev_futuri:
-                    for e in ev_futuri[:5]:
-                        st.write(f"🏎️ [{e.get('vettura', 'N/D')}] **{e['titolo']}** - {formatta_data_it(e['data_inizio'])}")
-                else:
-                    st.write("Nessun evento vettura in programma.")
-                    
                 st.subheader("🏢 Prenotazioni MO25 (In attesa)")
                 pren_pendenti = supabase.table("prenotazioni_aule").select("*").eq("stato", "In attesa").execute().data
                 if pren_pendenti:
@@ -204,12 +200,317 @@ else:
                         st.warning(f"👤 {r['username']} ➔ {r['divisione_richiesta']}")
                 else:
                     st.write("Nessuna richiesta di accesso pendente.")
+            
+            st.divider()
+            
+            st.subheader("🏎️ Panoramica Rapida Calendario Macchina")
+            eventi_mc_home = supabase.table("calendario_macchina").select("*").execute().data
+            scadenze_home = supabase.table("scadenze_documenti").select("*").execute().data
+            
+            mini_events = []
+            colori_auto = {"M26-ED (Elettrica)": "#1d3557", "M26-LH (Ibrida)": "#e63946", "Ibrida Rossa": "#f77f00"}
+            
+            if eventi_mc_home:
+                for e in eventi_mc_home:
+                    colore = colori_auto.get(e.get('vettura'), "#e63946")
+                    if e.get("tutto_il_giorno", True):
+                        end_d = datetime.strptime(e['data_fine'], "%Y-%m-%d") + timedelta(days=1)
+                        mini_events.append({"title": f"[{e.get('vettura','Auto')}] {e['titolo']}", "start": e['data_inizio'], "end": end_d.strftime("%Y-%m-%d"), "allDay": True, "color": colore, "className": "evento-all-day-evidenziato"})
+                    else:
+                        mini_events.append({"title": f"[{e.get('vettura','Auto')}] {e['titolo']}", "start": f"{e['data_inizio']}T{e['ora_inizio']}", "end": f"{e['data_fine']}T{e['ora_fine']}", "allDay": False, "color": colore})
+            
+            if scadenze_home:
+                for s in scadenze_home:
+                    mini_events.append({"title": f"🚨 {s['nome_documento']}", "start": s['data_scadenza'], "end": s['data_scadenza'], "allDay": True, "color": "#d90429", "className": "evento-all-day-evidenziato"})
+
+            mini_options = {
+                "headerToolbar": {"left": "prev,next today", "center": "title", "right": "timeGridWeek"},
+                "initialView": "timeGridWeek",
+                "height": "300px",
+                "locale": "it",
+                "firstDay": 1
+            }
+            
+            st.markdown("""
+                <style>
+                .fc-event.evento-all-day-evidenziato {
+                    background-color: #d90429 !important;
+                    border: 2px solid #ffffff !important;
+                    font-weight: bold !important;
+                    padding: 2px 4px !important;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.5) !important;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            calendar(events=mini_events, options=mini_options, key="mini_cal_macchina")
             st.divider()
         else:
             st.info("Benvenuto! Usa il menu laterale per navigare tra le sezioni del gestionale.")
 
     # ==========================================
-    # 2. RUBRICA CONTATTI
+    # 2. TASK MANAGER (NUOVO)
+    # ==========================================
+    elif menu == "📋 Task Manager":
+        st.title("📋 Task Manager Divisioni")
+        st.write("Gestisci le attività e i compiti operativi assegnati all'interno delle divisioni.")
+        
+        divisioni_mmr = [
+            "Business", "Powertrain CV", "Powertrain EV", "Frame and Body", 
+            "Aerodynamics and Thermal Managment", "Vehicle Dynamics", 
+            "Electronics", "Actuations", "Autonomous Driving", 
+            "Marketing", "Manufacturing", "Communication"
+        ]
+        
+        with st.expander("➕ Assegna Nuovo Task"):
+            with st.form("form_task"):
+                t_titolo = st.text_input("Titolo Attività")
+                t_div = st.selectbox("Divisione di Riferimento", divisioni_mmr)
+                t_assegnato = st.text_input("Assegnato a (Username o Nome)")
+                t_prio = st.selectbox("Priorità", ["Bassa", "Media", "Urgente"])
+                t_scadenza = st.date_input("Scadenza Attività", format="DD/MM/YYYY")
+                t_desc = st.text_area("Descrizione / Dettagli")
+                
+                if st.form_submit_button("Crea Task"):
+                    if t_titolo:
+                        supabase.table("task_divisioni").insert({
+                            "divisione": t_div,
+                            "titolo": t_titolo,
+                            "descrizione": t_desc,
+                            "assegnato_a": t_assegnato,
+                            "priorita": t_prio,
+                            "stato": "Da Fare",
+                            "scadenza": str(t_scadenza),
+                            "creato_da": utente['username']
+                        }).execute()
+                        st.success("Task creato con successo!")
+                        st.rerun()
+                    else:
+                        st.error("Inserisci il titolo del task.")
+
+        st.divider()
+        
+        try:
+            tasks = supabase.table("task_divisioni").select("*").execute().data
+            if tasks:
+                # Se non sei direttivo, vedi solo i task della tua divisione o quelli assegnati a te
+                if not is_direttivo:
+                    tasks = [t for t in tasks if t['divisione'] == utente['divisione'] or t.get('assegnato_a') == utente['username']]
+                
+                st.subheader("Attività in Corso")
+                col_f1, col_f2, col_f3 = st.columns(3)
+                
+                stati_task = ["Da Fare", "In Corso", "Completato"]
+                colonne_kanban = st.columns(3)
+                
+                for idx, stato in enumerate(stati_task):
+                    with colonne_kanban[idx]:
+                        st.markdown(f"### {stato}")
+                        filtro_tasks = [t for t in tasks if t.get('stato', 'Da Fare') == stato]
+                        if filtro_tasks:
+                            for t in filtro_tasks:
+                                with st.container(border=True):
+                                    st.write(f"**{t['titolo']}**")
+                                    st.caption(f"🏢 {t['divisione']} | 👤 {t.get('assegnato_a', 'N/D')}")
+                                    st.write(f"Scadenza: {formatta_data_it(t.get('scadenza'))}")
+                                    
+                                    # Pulsante per avanzare o modificare stato
+                                    nuovo_stato = st.selectbox("Stato", stati_task, index=stati_task.index(stato), key=f"st_t_{t['id']}")
+                                    if nuovo_stato != stato:
+                                        supabase.table("task_divisioni").update({"stato": nuovo_stato}).eq("id", t['id']).execute()
+                                        st.rerun()
+                                        
+                                    if st.button("🗑️ Elimina", key=f"del_t_{t['id']}"):
+                                        supabase.table("task_divisioni").delete().eq("id", t['id']).execute()
+                                        st.rerun()
+                        else:
+                            st.caption("Nessun task.")
+            else:
+                st.info("Nessun task registrato.")
+        except Exception:
+            st.info("Tabella task in configurazione su Supabase.")
+
+    # ==========================================
+    # 3. TEST & PISTA (NUOVO)
+    # ==========================================
+    elif menu == "🧪 Test & Pista":
+        st.title("🧪 Registro Test & Sessioni in Pista")
+        st.write("Archivio ufficiale dei test su pista, set-up vettura, dati telemetrici e riscontri cronometrici.")
+        
+        with st.expander("➕ Registra Nuova Sessione di Test"):
+            with st.form("form_test"):
+                c1, c2, c3 = st.columns(3)
+                d_test = c1.date_input("Data Test", format="DD/MM/YYYY")
+                luogo_test = c2.text_input("Autodromo / Luogo (es. Varano, Modena)")
+                vettura_test = c3.selectbox("Vettura Testata", ["M26-ED (Elettrica)", "M26-LH (Ibrida)", "Ibrida Rossa"])
+                
+                c4, c5 = st.columns(2)
+                pilota = c4.text_input("Pilota / Driver")
+                meteo = c5.text_input("Meteo / Condizioni Asfalto (es. Asciutto, 25°C)")
+                
+                miglior_tempo = st.text_input("Miglior Tempo sul Giro (es. 1:04.23)")
+                note_setup = st.text_area("Note di Set-up e Modifiche (Altezze, pressioni gomme, ali, ecc.)")
+                file_telemetria = st.file_uploader("Carica File Telemetria / Report PDF (Opzionale)", type=["pdf", "csv", "zip"])
+                
+                if st.form_submit_button("Salva Sessione Test"):
+                    if luogo_test:
+                        url_tel = None
+                        if file_telemetria:
+                            url_tel = upload_file_to_supabase(file_telemetria.getvalue(), file_telemetria.name, "workspaces")
+                        
+                        supabase.table("sessioni_test").insert({
+                            "data_test": str(d_test),
+                            "luogo": luogo_test,
+                            "vettura": vettura_test,
+                            "condizioni_meteo": meteo,
+                            "pilota": pilota,
+                            "note_set_up": note_setup,
+                            "miglior_tempo": miglior_tempo,
+                            "url_telemetria": url_tel,
+                            "creato_da": utente['username']
+                        }).execute()
+                        st.success("Sessione di test registrata con successo!")
+                        st.rerun()
+                    else:
+                        st.error("Inserisci il luogo del test.")
+
+        st.divider()
+        st.subheader("Storico Test in Pista")
+        
+        try:
+            sessioni = supabase.table("sessioni_test").select("*").order("data_test", desc=True).execute().data
+            if sessioni:
+                for s in sessioni:
+                    with st.expander(f"🏁 [{formatta_data_it(s['data_test'])}] {s['luogo']} — Vettura: {s['vettura']} (Best: {s.get('miglior_tempo', 'N/D')})"):
+                        c_s1, c_s2 = st.columns(2)
+                        c_s1.write(f"**Pilota:** {s.get('pilota', 'N/D')}")
+                        c_s1.write(f"**Meteo:** {s.get('condizioni_meteo', 'N/D')}")
+                        c_s2.write(f"**Registrato da:** {s.get('creato_da', 'N/D')}")
+                        
+                        st.write(f"**Note di Set-up:** {s.get('note_set_up', 'Nessuna nota')}")
+                        if s.get('url_telemetria'):
+                            st.markdown(f"📊 **[Scarica File Telemetria / Report]({s['url_telemetria']})**")
+            else:
+                st.info("Nessun test registrato.")
+        except Exception:
+            st.info("Tabella test in configurazione su Supabase.")
+
+    # ==========================================
+    # 4. DIZIONARIO COMPONENTI
+    # ==========================================
+    elif menu == "📖 Dizionario Componenti":
+        st.title("📖 Dizionario Componenti MMR")
+        st.write("Qui puoi consultare, cercare o inserire i componenti della vettura, la loro funzione e le relative immagini esplicative.")
+        
+        with st.expander("➕ Inserisci Nuovo Componente"):
+            with st.form("form_dizionario"):
+                nome_comp = st.text_input("Nome Componente")
+                divisione_comp = st.selectbox("Divisione di Competenza", [
+                    "Business", "Powertrain CV", "Powertrain EV", "Frame and Body", 
+                    "Aerodynamics and Thermal Managment", "Vehicle Dynamics", 
+                    "Electronics", "Actuations", "Autonomous Driving", 
+                    "Marketing", "Manufacturing", "Communication"
+                ])
+                descrizione_comp = st.text_area("Cosa fa e specifiche tecniche")
+                foto_comp = st.file_uploader("Carica Foto/Schema Componente (Opzionale)", type=["png", "jpg", "jpeg"])
+                
+                if st.form_submit_button("Salva nel Dizionario"):
+                    if nome_comp:
+                        url_foto = None
+                        if foto_comp:
+                            url_foto = upload_file_to_supabase(foto_comp.getvalue(), foto_comp.name, "workspaces")
+                        
+                        supabase.table("dizionario_componenti").insert({
+                            "nome": nome_comp,
+                            "divisione": divisione_comp,
+                            "descrizione": descrizione_comp,
+                            "url_foto": url_foto,
+                            "creato_da": utente['username']
+                        }).execute()
+                        st.success("Componente aggiunto al dizionario!")
+                        st.rerun()
+                    else:
+                        st.error("Inserisci almeno il nome del componente.")
+
+        st.divider()
+        st.subheader("Elenco Componenti Registrati")
+        
+        try:
+            componenti = supabase.table("dizionario_componenti").select("*").order("nome").execute().data
+            if componenti:
+                for c in componenti:
+                    with st.expander(f"⚙️ {c['nome']} — *[{c['divisione']}]*"):
+                        st.write(f"**Funzione / Specifiche:** {c['descrizione']}")
+                        st.caption(f"Inserito da: {c.get('creato_da', 'N/D')}")
+                        if c.get('url_foto'):
+                            st.image(c['url_foto'], caption=c['nome'], width=400)
+            else:
+                st.info("Nessun componente inserito nel dizionario.")
+        except Exception:
+            st.info("Tabella dizionario in fase di configurazione su Supabase.")
+
+    # ==========================================
+    # 5. BOM - BILL OF MATERIALS
+    # ==========================================
+    elif menu == "📦 BOM (Bill of Materials)":
+        st.title("📦 Bill of Materials (BOM) Vettura")
+        st.write("Gestione strutturata della distinta base dei materiali e componenti per assemblaggio.")
+        
+        with st.expander("➕ Aggiungi Elemento alla BOM"):
+            with st.form("form_bom"):
+                c1, c2 = st.columns(2)
+                codice_parte = c1.text_input("Codice Parte (es. FB-01-CHAS)")
+                nome_parte = c2.text_input("Nome Componente")
+                
+                c3, c4, c5 = st.columns(3)
+                gruppo_assieme = c3.selectbox("Sottoassieme Principale", [
+                    "Telaio e Aerodinamica", "Powertrain / Motore", "Elettronica & Ecu", 
+                    "Sospensioni e Dinamica", "Actuations & Pneumatica", "Altro"
+                ])
+                quantita = c4.number_input("Quantità", min_value=1, step=1, value=1)
+                divisione_rif = c5.selectbox("Divisione Responsabile", [
+                    "Business", "Powertrain CV", "Powertrain EV", "Frame and Body", 
+                    "Aerodynamics and Thermal Managment", "Vehicle Dynamics", 
+                    "Electronics", "Actuations", "Autonomous Driving", 
+                    "Marketing", "Manufacturing", "Communication"
+                ])
+                
+                materiale = st.text_input("Materiale / Specifiche (es. Alluminio 7075, CFRP)")
+                stato_produzione = st.selectbox("Stato", ["Da Progettare", "In Progettazione", "In Produzione", "Pronto / Disponibile", "Montato"])
+                
+                if st.form_submit_button("Aggiungi alla BOM"):
+                    if codice_parte and nome_parte:
+                        supabase.table("bom_vettura").insert({
+                            "codice": codice_parte,
+                            "nome": nome_parte,
+                            "assieme": gruppo_assieme,
+                            "quantita": quantita,
+                            "divisione": divisione_rif,
+                            "materiale": materiale,
+                            "stato": stato_produzione,
+                            "aggiornato_da": utente['username']
+                        }).execute()
+                        st.success("Componente aggiunto alla BOM!")
+                        st.rerun()
+                    else:
+                        st.error("Inserisci Codice e Nome del componente.")
+
+        st.divider()
+        
+        try:
+            bom_data = supabase.table("bom_vettura").select("*").order("assieme").execute().data
+            if bom_data:
+                df_bom = pd.DataFrame(bom_data)
+                df_bom = df_bom[['codice', 'nome', 'assieme', 'quantita', 'divisione', 'materiale', 'stato', 'aggiornato_da']]
+                df_bom.columns = ['Codice', 'Nome Componente', 'Assieme', 'Qtà', 'Divisione', 'Materiale', 'Stato', 'Agg. da']
+                st.dataframe(df_bom, use_container_width=True, hide_index=True)
+            else:
+                st.info("La BOM è attualmente vuota.")
+        except Exception:
+            st.info("Tabella BOM in fase di configurazione su Supabase.")
+
+    # ==========================================
+    # 6. RUBRICA CONTATTI
     # ==========================================
     elif menu == "👥 Rubrica Contatti":
         st.title("👥 Rubrica Contatti")
@@ -222,7 +523,7 @@ else:
             st.info("Nessun membro trovato.")
 
     # ==========================================
-    # 3. AREA PERSONALE (DOCUMENTI OPZIONALI)
+    # 7. AREA PERSONALE
     # ==========================================
     elif menu == "👤 Area Personale":
         st.title(f"👤 Area Personale di {utente['nome']} {utente['cognome']}")
@@ -254,15 +555,9 @@ else:
                     url_sic = upload_file_to_supabase(sicurezza_file.getvalue(), sicurezza_file.name, "workspaces") if sicurezza_file else dati_personali.get('url_sicurezza')
                     
                     aggiornamento = {
-                        "telefono": telefono,
-                        "data_nascita": data_nascita,
-                        "luogo_nascita": luogo_nascita,
-                        "codice_fiscale": codice_fiscale,
-                        "url_ci": url_ci,
-                        "url_ts": url_ts,
-                        "url_pass": url_pass,
-                        "url_pat": url_pat,
-                        "url_sicurezza": url_sic
+                        "telefono": telefono, "data_nascita": data_nascita, "luogo_nascita": luogo_nascita,
+                        "codice_fiscale": codice_fiscale, "url_ci": url_ci, "url_ts": url_ts,
+                        "url_pass": url_pass, "url_pat": url_pat, "url_sicurezza": url_sic
                     }
                     supabase.table("membri").update(aggiornamento).eq("id", utente['id']).execute()
                     st.success("Dati personali salvati con successo!")
@@ -283,23 +578,30 @@ else:
         )
 
     # ==========================================
-    # 4. SCADENZE DOCUMENTI
+    # 8. SCADENZE DOCUMENTI
     # ==========================================
     elif menu == "📄 Scadenze Documenti":
         st.title("📄 Gestione Documenti e Scadenze")
         st.write("Le scadenze inserite qui appariranno automaticamente nel Calendario Macchina, incluso un promemoria 15 giorni prima.")
         
-        with st.expander("➕ Aggiungi Nuova Scadenza"):
+        with st.expander("➕ Aggiungi Nuova Scadenza con Template"):
             with st.form("form_scadenza"):
                 nome_doc = st.text_input("Nome Documento / Evento")
                 data_scad = st.date_input("Data di Scadenza", format="DD/MM/YYYY")
                 note_doc = st.text_area("Note / Specifiche")
+                file_template_nuovo = st.file_uploader("Carica Template / Documento (Opzionale)", type=["pdf", "doc", "docx", "xls", "xlsx"])
+                
                 if st.form_submit_button("Crea Scadenza"):
                     if nome_doc:
+                        url_temp = None
+                        if file_template_nuovo:
+                            url_temp = upload_file_to_supabase(file_template_nuovo.getvalue(), file_template_nuovo.name, "workspaces")
+                        
                         supabase.table("scadenze_documenti").insert({
                             "nome_documento": nome_doc,
                             "data_scadenza": str(data_scad),
                             "note": note_doc,
+                            "url_template": url_temp,
                             "creato_da": utente['username']
                         }).execute()
                         st.success("Scadenza aggiunta con successo!")
@@ -316,9 +618,11 @@ else:
                     
                     if s.get('url_template'):
                         st.markdown(f"📄 **[Scarica Documento/Template Allegato]({s['url_template']})**")
+                    else:
+                        st.caption("Nessun file o template allegato.")
                     
                     st.divider()
-                    st.write("**Aggiungi o Aggiorna il Template / Documento (Opzionale):**")
+                    st.write("**Aggiungi o Aggiorna il Template / Documento:**")
                     file_up = st.file_uploader("Carica File", key=f"file_scad_{s['id']}")
                     
                     col_s1, col_s2 = st.columns([1, 4])
@@ -339,7 +643,7 @@ else:
             st.info("Non ci sono scadenze documentali attive.")
 
     # ==========================================
-    # 5. DOCUMENTI MEMBRI (RISERVATO AL BOARD)
+    # 9. DOCUMENTI MEMBRI (RISERVATO AL BOARD)
     # ==========================================
     elif menu == "📂 Documenti Membri":
         st.title("📂 Documenti e Anagrafiche Membri")
@@ -373,7 +677,7 @@ else:
             st.info("Nessun membro registrato.")
 
     # ==========================================
-    # 6. CALENDARI
+    # 10. CALENDARI
     # ==========================================
     elif menu == "📅 Calendari":
         st.title("📅 Calendari Team MMR")
@@ -389,6 +693,7 @@ else:
             "navLinks": True,
             "height": "700px",
             "locale": "it", 
+            "firstDay": 1,
             "buttonText": {"today": "Oggi", "month": "Mese", "week": "Settimana", "day": "Giorno"}
         }
 
@@ -456,6 +761,7 @@ else:
                         end_date = datetime.strptime(e['data_fine'], "%Y-%m-%d") + timedelta(days=1)
                         evento_cal["end"] = end_date.strftime("%Y-%m-%d")
                         evento_cal["allDay"] = True
+                        evento_cal["className"] = "evento-all-day-evidenziato"
                     else:
                         evento_cal["start"] = f"{e['data_inizio']}T{e['ora_inizio']}"
                         evento_cal["end"] = f"{e['data_fine']}T{e['ora_fine']}"
@@ -471,7 +777,8 @@ else:
                         "start": s['data_scadenza'],
                         "end": s['data_scadenza'],
                         "color": "#d90429",
-                        "allDay": True
+                        "allDay": True,
+                        "className": "evento-all-day-evidenziato"
                     })
                     data_scad_obj = datetime.strptime(s['data_scadenza'], "%Y-%m-%d")
                     data_promemoria = (data_scad_obj - timedelta(days=15)).strftime("%Y-%m-%d")
@@ -480,8 +787,23 @@ else:
                         "start": data_promemoria,
                         "end": data_promemoria,
                         "color": "#ffb703",
-                        "allDay": True
+                        "allDay": True,
+                        "className": "evento-all-day-evidenziato"
                     })
+
+            st.markdown("""
+                <style>
+                .fc-daygrid-event.evento-all-day-evidenziato, .fc-timegrid-event.evento-all-day-evidenziato {
+                    background-color: #d90429 !important;
+                    border: 3px solid #ffffff !important;
+                    font-size: 14px !important;
+                    font-weight: bold !important;
+                    padding: 6px 10px !important;
+                    border-radius: 6px !important;
+                    box-shadow: 0 4px 10px rgba(0,0,0,0.6) !important;
+                }
+                </style>
+            """, unsafe_allow_html=True)
 
             st.write("🔵 *M26-ED (Blu)* | 🔴 *M26-LH (Rosso)* | 🟠 *Ibrida Rossa (Arancione)*")
             calendar(events=cal_macchina_events, options=calendar_options, key="cal_macchina")
@@ -568,7 +890,7 @@ else:
             calendar(events=cal_mo25_events, options=calendar_options, key="cal_mo25_view")
 
     # ==========================================
-    # 7. AREE DI LAVORO (FILE MANAGER)
+    # 11. AREE DI LAVORO (FILE MANAGER)
     # ==========================================
     elif menu == "🏢 Aree di Lavoro":
         st.title("🏢 Aree di Lavoro Divisioni")
@@ -668,7 +990,7 @@ else:
                     st.info("Nessuna richiesta in sospeso.")
 
     # ==========================================
-    # 8. GESTIONE ACQUISTI
+    # 12. GESTIONE ACQUISTI
     # ==========================================
     elif menu == "🛒 Gestione Acquisti":
         st.title("🛒 Gestione Acquisti")
@@ -761,7 +1083,7 @@ else:
                 st.dataframe(df_mie, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # 9. BILANCIO BUDGET
+    # 13. BILANCIO BUDGET
     # ==========================================
     elif menu == "📊 Bilancio Budget":
         st.title("📊 Bilancio e Budget Generale")
@@ -779,7 +1101,7 @@ else:
             st.info("Nessun acquisto ha ancora raggiunto la fase di emissione buono d'ordine.")
 
     # ==========================================
-    # 10. GESTIONE UTENTI
+    # 14. GESTIONE UTENTI
     # ==========================================
     elif menu == "⚙️ Gestione Utenti":
         st.title("⚙️ Gestione Utenti Avanzata")
